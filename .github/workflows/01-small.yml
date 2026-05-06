@@ -75,7 +75,15 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-pip ffmpeg zip curl jq bc
+          sudo apt-get install -y python3-pip ffmpeg zip curl jq bc unzip
+
+          # Install Deno (JS runtime required by yt-dlp for YouTube n-challenge solving)
+          curl -fsSL https://deno.land/install.sh | sh
+          export DENO_INSTALL="$HOME/.deno"
+          export PATH="$DENO_INSTALL/bin:$PATH"
+          echo "$DENO_INSTALL/bin" >> $GITHUB_PATH
+          deno --version
+
           pip3 install --upgrade yt-dlp
 
       - name: Download YouTube Video
@@ -136,6 +144,9 @@ jobs:
               ;;
           esac
 
+          # Common yt-dlp flags shared across methods
+          COMMON_FLAGS="--merge-output-format mp4 --output tmp_downloads/%(title)s.%(ext)s --no-part --no-playlist --retries 10 --fragment-retries 10 --no-check-certificates"
+
           # Array of different methods to try
           download_video() {
             local METHOD=$1
@@ -143,96 +154,91 @@ jobs:
 
             case $METHOD in
               1)
+                # mweb client - does NOT require PO token, very reliable
                 yt-dlp \
                   --proxy "socks5://127.0.0.1:1080" \
                   --format "$FORMAT" \
-                  --merge-output-format mp4 \
-                  --output "tmp_downloads/%(title)s.%(ext)s" \
-                  --no-part \
-                  --no-playlist \
-                  --retries 10 \
-                  --fragment-retries 10 \
+                  $COMMON_FLAGS \
+                  --extractor-args "youtube:player_client=mweb" \
                   --concurrent-fragments 4 \
-                  --no-check-certificates \
-                  --prefer-free-formats \
-                  --no-warnings \
                   "$URL"
                 ;;
               2)
+                # android client via WARP - widely supported, no JS runtime needed
                 yt-dlp \
                   --proxy "socks5://127.0.0.1:1080" \
                   --format "$FORMAT" \
-                  --merge-output-format mp4 \
-                  --output "tmp_downloads/%(title)s.%(ext)s" \
-                  --no-part \
-                  --no-playlist \
-                  --retries 10 \
-                  --fragment-retries 10 \
-                  --user-agent "Mozilla/5.0 (Linux; Android 12; SM-S906N Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36" \
+                  $COMMON_FLAGS \
                   --extractor-args "youtube:player_client=android" \
+                  --user-agent "Mozilla/5.0 (Linux; Android 12; SM-S906N Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36" \
+                  --concurrent-fragments 4 \
                   "$URL"
                 ;;
               3)
+                # mweb + android combo fallback (tries both clients, picks best format)
                 yt-dlp \
                   --proxy "socks5://127.0.0.1:1080" \
                   --format "$FORMAT" \
-                  --merge-output-format mp4 \
-                  --output "tmp_downloads/%(title)s.%(ext)s" \
-                  --no-part \
-                  --no-playlist \
-                  --retries 10 \
-                  --fragment-retries 10 \
-                  --user-agent "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1" \
-                  --extractor-args "youtube:player_client=ios" \
+                  $COMMON_FLAGS \
+                  --extractor-args "youtube:player_client=mweb,android" \
+                  --concurrent-fragments 4 \
                   "$URL"
                 ;;
               4)
+                # web client with deno JS runtime for n-challenge solving
                 yt-dlp \
                   --proxy "socks5://127.0.0.1:1080" \
                   --format "$FORMAT" \
-                  --merge-output-format mp4 \
-                  --output "tmp_downloads/%(title)s.%(ext)s" \
-                  --no-part \
-                  --no-playlist \
-                  --retries 10 \
-                  --fragment-retries 10 \
-                  --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+                  $COMMON_FLAGS \
                   --extractor-args "youtube:player_client=web" \
+                  --js-runtimes deno \
+                  --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
                   --add-header "Accept-Language:en-US,en;q=0.9" \
                   "$URL"
                 ;;
               5)
-                yt-dlp \
-                  --format "$FORMAT" \
-                  --merge-output-format mp4 \
-                  --output "tmp_downloads/%(title)s.%(ext)s" \
-                  --no-part \
-                  --no-playlist \
-                  --retries 10 \
-                  --fragment-retries 10 \
-                  --concurrent-fragments 4 \
-                  --no-check-certificates \
-                  --user-agent "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-                  "$URL"
-                ;;
-              6)
+                # android_vr client - bypasses most bot checks, no PO token needed
                 yt-dlp \
                   --proxy "socks5://127.0.0.1:1080" \
                   --format "$FORMAT" \
-                  --merge-output-format mp4 \
-                  --output "tmp_downloads/%(title)s.%(ext)s" \
-                  --no-part \
-                  --no-playlist \
-                  --retries 10 \
-                  --fragment-retries 10 \
-                  --extractor-args "youtube:player_client=tv_embedded" \
+                  $COMMON_FLAGS \
+                  --extractor-args "youtube:player_client=android_vr" \
+                  --concurrent-fragments 4 \
+                  "$URL"
+                ;;
+              6)
+                # mweb without proxy as direct fallback
+                yt-dlp \
+                  --format "$FORMAT" \
+                  $COMMON_FLAGS \
+                  --extractor-args "youtube:player_client=mweb" \
+                  --concurrent-fragments 4 \
+                  "$URL"
+                ;;
+              7)
+                # android without proxy as direct fallback
+                yt-dlp \
+                  --format "$FORMAT" \
+                  $COMMON_FLAGS \
+                  --extractor-args "youtube:player_client=android" \
+                  --concurrent-fragments 4 \
+                  "$URL"
+                ;;
+              8)
+                # Last resort: broadest format fallback, no strict ext requirements
+                yt-dlp \
+                  --proxy "socks5://127.0.0.1:1080" \
+                  --format "bestvideo+bestaudio/best" \
+                  $COMMON_FLAGS \
+                  --extractor-args "youtube:player_client=mweb,android,android_vr" \
+                  --concurrent-fragments 4 \
                   "$URL"
                 ;;
             esac
           }
 
           DOWNLOAD_SUCCESS=false
-          for METHOD in 1 2 3 4 5 6; do
+          for METHOD in 1 2 3 4 5 6 7 8; do
             if download_video $METHOD; then
               DOWNLOAD_SUCCESS=true
               echo "Download successful with method $METHOD!"
